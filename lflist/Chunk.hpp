@@ -44,7 +44,7 @@ private:
 		Entry() :
 				deleteBit(false), nextFreezeBit(false) {
 			keyData = (long long) DEFAULT_KEY;
-			keyData = keyData << sizeof(int) / 2;
+			keyData = keyData << sizeof(long) / 2;
 
 			// Preserve upper 4 bytes and mask lower 4 bytes
 			long long mask = 0xffffffff00000000;
@@ -56,7 +56,7 @@ private:
 		virtual ~Entry() {
 		}
 
-		static long long combine(int key, TData data) {
+		static long long combine(long key, TData data) {
 			long long combinedKeyData = (long) key;
 			combinedKeyData <<= sizeof(key);
 			combinedKeyData |= (long) data;
@@ -106,7 +106,7 @@ private:
 	static __thread Entry **hp0;
 	static __thread Entry **hp1;
 
-	Entry* AllocateEntry(Chunk* chunk, int key, TData data) {
+	Entry* AllocateEntry(Chunk* chunk, long key, TData data) {
 		long long keyData = Entry::combine(key, data);
 		// Combine into the structure of a keyData word
 		long long expecEnt = Entry::combine(Entry::DEFAULT_KEY, 0);
@@ -140,21 +140,21 @@ public:
 	virtual ~Chunk() {
 	}
 
-	bool Search(int key, TData *data) {
+	bool Search(long key, TData *data) {
 		Chunk* chunk = FindChunk(key);
 		bool result = SearchInChunk(chunk, key, data);
 		// hp5 = hp4 = hp3 = hp2 = null;
 		return result;
 	}
 
-	bool Insert(int key, TData data) {
+	bool Insert(long key, TData data) {
 		Chunk* chunk = FindChunk(key);
 		bool result = InsertToChunk(chunk, key, data);
 		// hp5 = hp4 = hp3 = hp2 = null;
 		return result;
 	}
 
-	bool Delete(int key, TData data) {
+	bool Delete(long key, TData data) {
 		Chunk* chunk = FindChunk(key);
 		bool result = DeleteInChunk(chunk, key);
 		// hp5 = hp4 = hp3 = hp2 = null;
@@ -162,18 +162,30 @@ public:
 	}
 
 	void IncCount(Chunk* chunk) {
-		while (TRUE) {
-			counter = chunk->counter;
+		while (true) {
+			int oldCounter = chunk->counter;
 
-			if ( CAS(&(chunk→counter),counter,counter+1))
+			if (chunk->counter.compare_exchange_strong(oldCounter,
+					oldCounter + 1))
 				return;
 		}
 	}
 
 	bool DecCount(Chunk* chunk) {
+		while (true) {
+			int oldCounter = chunk->counter;
+
+			if (oldCounter == MIN)
+				return false;
+			// comparison with minimal, MIN-1 illegal
+
+			if (chunk->counter.compare_exchange_strong(oldCounter,
+					oldCounter - 1))
+				return true;
+		}
 	}
 
-	bool InsertToChunk(Chunk* chunk, int key, TData data) {
+	bool InsertToChunk(Chunk* chunk, long key, TData data) {
 		// Find an available entry
 		Entry *current = AllocateEntry(chunk, key, data);
 
@@ -222,7 +234,7 @@ public:
 		// Clear all hazard pointers and return
 	}
 
-	ReturnCode InsertEntry(Chunk* chunk, Entry* entry, int key) {
+	ReturnCode InsertEntry(Chunk* chunk, Entry* entry, long key) {
 		while (true) {
 
 			// Find insert location and pointers to previous and current entries
@@ -261,7 +273,7 @@ public:
 		}
 	}
 
-	Chunk* Freeze(Chunk* chunk, int key, int data, TriggerType trigger,
+	Chunk* Freeze(Chunk* chunk, long key, int data, TriggerType trigger,
 	bool* result);
 
 	void MarkChunkFrozen(Chunk* chunk);

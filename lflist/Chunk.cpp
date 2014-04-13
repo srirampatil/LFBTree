@@ -18,6 +18,7 @@ void hello() {
 
 int main() {
 	std::thread t(hello);
-	cout << sizeof(int) << endl;
+	int a;
+	cout << &a << endl;
 	t.join();
 }
