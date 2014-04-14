@@ -27,7 +27,9 @@
 #define SET_FREEZE_STATE_MASK 7
 #define UNSET_FREEZE_STATE_MASK 0xfffffffffffffff8
 
-typedef int RecovType;
+enum RecovType {
+	MERGE
+};
 
 enum TriggerType {
 	NONE, INSERT, DELETE, ENSLAVE
@@ -38,7 +40,7 @@ enum ReturnCode {
 };
 
 enum FreezeState {
-	NO_FREEZE, INTERNAL_FREEZE
+	NO_FREEZE = 0, INTERNAL_FREEZE, EXTERNAL_FREEZE
 };
 
 template<class TData>
@@ -144,10 +146,14 @@ public:
 		for (int i = 0; i < MAX; i++)
 			entriesArray.push_back(new Entry());
 
-		setFreezeState(NO_FREEZE);
+		compareAndSetFreezeState(0, NO_FREEZE);
 	}
 
 	virtual ~Chunk() {
+	}
+
+	static Chunk *combine(Chunk *chunk, FreezeState state) {
+		return chunk | state;
 	}
 
 	bool compareAndSetFreezeState(FreezeState oldState, FreezeState newState) {
@@ -156,7 +162,7 @@ public:
 
 		Chunk *newMergeBuddy = (long) oldMergeBuddy | newState;
 		
-		return compareAndSetMergeBuddy(oldMergeBuddy, newMergeBuddy);
+		return compareAndSetMergeBuddyAndFreezeState(oldMergeBuddy, newMergeBuddy);
 	}
 
 	int	getFreezeState() {
@@ -168,6 +174,11 @@ public:
 	}
 
 	bool compareAndSetMergeBuddy(Chunk *oldMergeBuddy, Chunk *newMergeBuddy) {
+		FreezeState currentState = getFreezeState();
+		return compareAndSetMergeBuddyAndFreezeState(oldMergeBuddy | currentState, newMergeBuddy | currentState); 
+	}
+
+	bool compareAndSetMergeBuddyAndFreezeState(Chunk *oldMergeBuddy, Chunk *newMergeBuddy) {
 		return mergeBuddy.compare_exchange_strong(oldMergeBuddy, newMergeBuddy);
 	}
 
@@ -306,7 +317,30 @@ public:
 
 	Chunk* Freeze(Chunk* chunk, int key, TData data, TriggerType trigger,
 				bool* result) {
-			
+
+		chunk->compareAndSetFreezeState(NO_FREEZE, INTERNAL_FREEZE);
+		// At this point, the freeze state is either internal freeze or external freeze
+		MarkChunkFrozen(chunk);
+		StabilizeChunk(chunk);
+
+		if ( chunk->getFreezeState() == EXTERNAL_FREEZE ) {
+			// This chunk was in external freeze before Line 1 executed. Find the master chunk.
+			Chunk *master = chunk->getMergeBuddyi();
+			// Fix the buddy’s mergeBuddy pointer.
+			Chunk *masterOldBuddy = Chunk::combine(NULL, INTERNAL_FREEZE);
+			Chunk *masterNewBuddy = Chunk::combine(chunk, INTERNAL_FREEZE);
+			master->compareAndSetMergeBuddyAndFreezeState(masterOldBuddy, masterNewBuddy);
+			return FreezeRecovery(chunk->getMergeBuddy(), key, data, MERGE, chunk, trigger, result);
+		}
+
+		RecovType decision = FreezeDecision(chunk);
+		// The freeze state is internal freeze
+		
+		Chunk *chunkMergePartner = NULL;
+		if ( decision == MERGE ) 
+			chunkMergePartner = FindMergeSlave(chunk);
+		
+		return FreezeRecovery(chunk, key, data, decision, chunkMergePartner, trigger, result);
     }
 
 	void MarkChunkFrozen(Chunk* chunk);
