@@ -14,6 +14,19 @@
 #include <atomic>
 #include <vector>
 
+#define HALF_LONG sizeof(long) / 2
+
+#define KEY_MASK 0xffffffff00000000
+#define DATA_MASK 0x00000000ffffffff
+
+#define SET_FREEZE_BIT_MASK 2
+#define SET_DELETE_BIT_MASK 1
+#define UNSET_FREEZE_BIT_MASK 0xfffffffffffffffd
+#define UNSET_DELETE_BIT_MASK 0xfffffffffffffffe
+
+#define SET_FREEZE_STATE_MASK 7
+#define UNSET_FREEZE_STATE_MASK 0xfffffffffffffff8
+
 typedef int RecovType;
 
 enum TriggerType {
@@ -30,35 +43,33 @@ enum FreezeState {
 
 template<class TData>
 class Chunk {
-private:
+public:
 
 	class Entry {
+    private:
+        std::atomic<long> keyData;
+		
+		std::atomic<Entry *> next;		// LSBs are deleteBit and freezeBit
+		// bool freezeBit:1;
+		// bool deleteBit:1;
+
 	public:
-		std::atomic<long long> keyData;
-		std::atomic<Entry *> next;
-
-		bool nextFreezeBit;bool deleteBit;
-
 		static const int DEFAULT_KEY;
 
-		Entry() :
-				deleteBit(false), nextFreezeBit(false) {
-			keyData = (long long) DEFAULT_KEY;
-			keyData = keyData << sizeof(long) / 2;
+		Entry() : next(NULL) {
+			keyData = (long) DEFAULT_KEY;
+			keyData = keyData << HALF_LONG;
 
 			// Preserve upper 4 bytes and mask lower 4 bytes
-			long long mask = 0xffffffff00000000;
-			keyData &= mask;
-
-			next = NULL;
+			keyData &= KEY_MASK;
 		}
 
 		virtual ~Entry() {
 		}
 
-		static long long combine(long key, TData data) {
-			long long combinedKeyData = (long) key;
-			combinedKeyData <<= sizeof(key);
+		static long combine(int key, TData data) {
+			long combinedKeyData = (long) key;
+			combinedKeyData <<= HALF_LONG;
 			combinedKeyData |= (long) data;
 			return combinedKeyData;
 		}
@@ -68,7 +79,7 @@ private:
 		 * returns true or false accordingly.
 		 */
 		bool isFrozen() {
-			return nextFreezeBit;
+			return ((long)next & SET_FREEZE_BIT_MASK);
 		}
 
 		/**
@@ -76,7 +87,7 @@ private:
 		 * matter if in initial p this bit was set or not.
 		 */
 		void markFrozen() {
-			nextFreezeBit = true;
+			next |= SET_FREEZE_BIT_MASK;
 		}
 
 		/**
@@ -84,18 +95,18 @@ private:
 		 * doesn’t matter if in initial p this bit was set or not.
 		 */
 		void clearFrozen() {
-			nextFreezeBit = false;
+			next &= UNSET_FREEZE_BIT_MASK;
 		}
 	};
 
 	std::atomic<int> counter;
-	std::atomic<FreezeState> freezeState;
-
-	std::atomic<Chunk *> mergeBuddy;
-	std::atomic<Chunk *> nextChunk;
+	std::vector<Entry *> entriesArray;
 	std::atomic<Chunk *> newChunk;
 
-	std::vector<Entry *> entriesArray;
+	std::atomic<Chunk *> mergeBuddy;		// last 3 LSBs are freezeState
+	// int freezeState:3;
+
+	std::atomic<Chunk *> nextChunk;
 
 	int MAX, MIN;
 
@@ -106,10 +117,10 @@ private:
 	static __thread Entry **hp0;
 	static __thread Entry **hp1;
 
-	Entry* AllocateEntry(Chunk* chunk, long key, TData data) {
-		long long keyData = Entry::combine(key, data);
+	Entry* AllocateEntry(Chunk* chunk, int key, TData data) {
+		long keyData = Entry::combine(key, data);
 		// Combine into the structure of a keyData word
-		long long expecEnt = Entry::combine(Entry::DEFAULT_KEY, 0);
+		long expecEnt = Entry::combine(Entry::DEFAULT_KEY, 0);
 
 		// Traverse entries in chunk
 		for (unsigned i = 0; i < entriesArray.size(); i++) {
@@ -128,33 +139,53 @@ private:
 
 public:
 
-	Chunk(int max, int min) :
+	Chunk(int max, int min) : counter(0), newChunk(NULL), mergeBuddy(NULL), nextChunk(NULL), 
 			MAX(max), MIN(min) {
 		for (int i = 0; i < MAX; i++)
 			entriesArray.push_back(new Entry());
 
-		counter.store(0);
-		freezeState.store(NO_FREEZE);
+		setFreezeState(NO_FREEZE);
 	}
 
 	virtual ~Chunk() {
 	}
 
-	bool Search(long key, TData *data) {
+	bool compareAndSetFreezeState(FreezeState oldState, FreezeState newState) {
+		Chunk *oldMergeBuddy = getMergeBuddy();
+		oldMergeBuddy  = (long) oldMergeBuddy | oldState;
+
+		Chunk *newMergeBuddy = (long) oldMergeBuddy | newState;
+		
+		return compareAndSetMergeBuddy(oldMergeBuddy, newMergeBuddy);
+	}
+
+	int	getFreezeState() {
+		return (long) mergeBuddy & SET_FREEZE_STATE_MASK;
+	}
+
+	Chunk *getMergeBuddy() {
+		return mergeBuddy & UNSET_FREEZE_STATE_MASK;
+	}
+
+	bool compareAndSetMergeBuddy(Chunk *oldMergeBuddy, Chunk *newMergeBuddy) {
+		return mergeBuddy.compare_exchange_strong(oldMergeBuddy, newMergeBuddy);
+	}
+
+	bool Search(int key, TData *data) {
 		Chunk* chunk = FindChunk(key);
 		bool result = SearchInChunk(chunk, key, data);
 		// hp5 = hp4 = hp3 = hp2 = null;
 		return result;
 	}
 
-	bool Insert(long key, TData data) {
+	bool Insert(int key, TData data) {
 		Chunk* chunk = FindChunk(key);
 		bool result = InsertToChunk(chunk, key, data);
 		// hp5 = hp4 = hp3 = hp2 = null;
 		return result;
 	}
 
-	bool Delete(long key, TData data) {
+	bool Delete(int key, TData data) {
 		Chunk* chunk = FindChunk(key);
 		bool result = DeleteInChunk(chunk, key);
 		// hp5 = hp4 = hp3 = hp2 = null;
@@ -185,7 +216,7 @@ public:
 		}
 	}
 
-	bool InsertToChunk(Chunk* chunk, long key, TData data) {
+	bool InsertToChunk(Chunk* chunk, int key, TData data) {
 		// Find an available entry
 		Entry *current = AllocateEntry(chunk, key, data);
 
@@ -234,7 +265,7 @@ public:
 		// Clear all hazard pointers and return
 	}
 
-	ReturnCode InsertEntry(Chunk* chunk, Entry* entry, long key) {
+	ReturnCode InsertEntry(Chunk* chunk, Entry* entry, int key) {
 		while (true) {
 
 			// Find insert location and pointers to previous and current entries
@@ -273,8 +304,10 @@ public:
 		}
 	}
 
-	Chunk* Freeze(Chunk* chunk, long key, int data, TriggerType trigger,
-	bool* result);
+	Chunk* Freeze(Chunk* chunk, int key, TData data, TriggerType trigger,
+				bool* result) {
+			
+    }
 
 	void MarkChunkFrozen(Chunk* chunk);
 	void StabilizeChunk(Chunk* chunk);

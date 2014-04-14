@@ -1,0 +1,62 @@
+!_TAG_FILE_FORMAT	2	/extended format; --format=1 will not append ;" to lines/
+!_TAG_FILE_SORTED	1	/0=unsorted, 1=sorted, 2=foldcase/
+!_TAG_PROGRAM_AUTHOR	Darren Hiebert	/dhiebert@users.sourceforge.net/
+!_TAG_PROGRAM_NAME	Exuberant Ctags	//
+!_TAG_PROGRAM_URL	http://ctags.sourceforge.net	/official site/
+!_TAG_PROGRAM_VERSION	5.8	//
+AllocateEntry	Chunk.hpp	/^	Entry* AllocateEntry(Chunk* chunk, int key, TData data) {$/;"	f	class:Chunk
+CHUNK_HPP_	Chunk.hpp	9;"	d
+Chunk	Chunk.hpp	/^	Chunk(int max, int min) :$/;"	f	class:Chunk
+Chunk	Chunk.hpp	/^class Chunk {$/;"	c
+DEFAULT_KEY	Chunk.cpp	/^const int Chunk<TData>::Entry::DEFAULT_KEY = (int) '|';$/;"	m	class:Chunk::Entry	file:
+DEFAULT_KEY	Chunk.hpp	/^		static const int DEFAULT_KEY;$/;"	m	class:Chunk::Entry
+DELETE	Chunk.hpp	/^	NONE, INSERT, DELETE, ENSLAVE$/;"	e	enum:TriggerType
+DecCount	Chunk.hpp	/^	bool DecCount(Chunk* chunk) {$/;"	f	class:Chunk
+Delete	Chunk.hpp	/^	bool Delete(int key, TData data) {$/;"	f	class:Chunk
+ENSLAVE	Chunk.hpp	/^	NONE, INSERT, DELETE, ENSLAVE$/;"	e	enum:TriggerType
+EXISTED	Chunk.hpp	/^	SUCCESS_THIS, SUCCESS_OTHER, EXISTED$/;"	e	enum:ReturnCode
+Entry	Chunk.hpp	/^		Entry() :$/;"	f	class:Chunk::Entry
+Entry	Chunk.hpp	/^	class Entry {$/;"	c	class:Chunk
+FreezeState	Chunk.hpp	/^enum FreezeState {$/;"	g
+HALF_LONG	Chunk.hpp	17;"	d
+INSERT	Chunk.hpp	/^	NONE, INSERT, DELETE, ENSLAVE$/;"	e	enum:TriggerType
+INTERNAL_FREEZE	Chunk.hpp	/^	NO_FREEZE, INTERNAL_FREEZE$/;"	e	enum:FreezeState
+IncCount	Chunk.hpp	/^	void IncCount(Chunk* chunk) {$/;"	f	class:Chunk
+Insert	Chunk.hpp	/^	bool Insert(int key, TData data) {$/;"	f	class:Chunk
+InsertEntry	Chunk.hpp	/^	ReturnCode InsertEntry(Chunk* chunk, Entry* entry, int key) {$/;"	f	class:Chunk
+InsertToChunk	Chunk.hpp	/^	bool InsertToChunk(Chunk* chunk, int key, TData data) {$/;"	f	class:Chunk
+MAX	Chunk.hpp	/^	int MAX, MIN;$/;"	m	class:Chunk
+MIN	Chunk.hpp	/^	int MAX, MIN;$/;"	m	class:Chunk
+NONE	Chunk.hpp	/^	NONE, INSERT, DELETE, ENSLAVE$/;"	e	enum:TriggerType
+NO_FREEZE	Chunk.hpp	/^	NO_FREEZE, INTERNAL_FREEZE$/;"	e	enum:FreezeState
+RecovType	Chunk.hpp	/^typedef int RecovType;$/;"	t
+ReturnCode	Chunk.hpp	/^enum ReturnCode {$/;"	g
+SUCCESS_OTHER	Chunk.hpp	/^	SUCCESS_THIS, SUCCESS_OTHER, EXISTED$/;"	e	enum:ReturnCode
+SUCCESS_THIS	Chunk.hpp	/^	SUCCESS_THIS, SUCCESS_OTHER, EXISTED$/;"	e	enum:ReturnCode
+Search	Chunk.hpp	/^	bool Search(int key, TData *data) {$/;"	f	class:Chunk
+TriggerType	Chunk.hpp	/^enum TriggerType {$/;"	g
+clearFrozen	Chunk.hpp	/^		void clearFrozen() {$/;"	f	class:Chunk::Entry
+combine	Chunk.hpp	/^		static long combine(int key, TData data) {$/;"	f	class:Chunk::Entry
+counter	Chunk.hpp	/^	std::atomic<int> counter;$/;"	m	class:Chunk
+cur	Chunk.hpp	/^	static __thread Entry *cur;$/;"	m	class:Chunk
+dataMask	Chunk.hpp	/^        const long dataMask;$/;"	m	class:Chunk::Entry
+deleteBit	Chunk.hpp	/^        bool deleteBit;$/;"	m	class:Chunk::Entry
+entriesArray	Chunk.hpp	/^	std::vector<Entry *> entriesArray;$/;"	m	class:Chunk
+freezeState	Chunk.hpp	/^	std::atomic<FreezeState> freezeState;$/;"	m	class:Chunk
+hello	Chunk.cpp	/^void hello() {$/;"	f
+hp0	Chunk.hpp	/^	static __thread Entry **hp0;$/;"	m	class:Chunk
+hp1	Chunk.hpp	/^	static __thread Entry **hp1;$/;"	m	class:Chunk
+isFrozen	Chunk.hpp	/^		bool isFrozen() {$/;"	f	class:Chunk::Entry
+keyData	Chunk.hpp	/^        std::atomic<long> keyData;$/;"	m	class:Chunk::Entry
+keyMask	Chunk.hpp	/^        const long keyMask;$/;"	m	class:Chunk::Entry
+main	Chunk.cpp	/^int main() {$/;"	f
+markFrozen	Chunk.hpp	/^		void markFrozen() {$/;"	f	class:Chunk::Entry
+mergeBuddy	Chunk.hpp	/^	std::atomic<Chunk *> mergeBuddy;$/;"	m	class:Chunk
+newChunk	Chunk.hpp	/^	std::atomic<Chunk *> newChunk;$/;"	m	class:Chunk
+next	Chunk.hpp	/^		std::atomic<Entry *> next;$/;"	m	class:Chunk::Entry
+next	Chunk.hpp	/^	static __thread Entry *next;$/;"	m	class:Chunk
+nextChunk	Chunk.hpp	/^	std::atomic<Chunk *> nextChunk;$/;"	m	class:Chunk
+nextFreezeBit	Chunk.hpp	/^		bool nextFreezeBit;$/;"	m	class:Chunk::Entry
+previous	Chunk.hpp	/^	static __thread Entry **previous;$/;"	m	class:Chunk
+~Chunk	Chunk.hpp	/^	virtual ~Chunk() {$/;"	f	class:Chunk
+~Entry	Chunk.hpp	/^		virtual ~Entry() {$/;"	f	class:Chunk::Entry

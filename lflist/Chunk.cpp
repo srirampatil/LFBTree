@@ -21,4 +21,6 @@ int main() {
 	int a;
 	cout << &a << endl;
 	t.join();
+
+	cout << "Bing!" << endl;
 }
