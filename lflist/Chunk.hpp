@@ -29,7 +29,7 @@
 #define UNSET_FREEZE_STATE_MASK 0xfffffffffffffff8
 
 enum RecovType {
-	MERGE
+	SPLIT, MERGE, COPY
 };
 
 enum TriggerType {
@@ -89,16 +89,16 @@ public:
 		 * Returns the value of a pointer p with the frozen bit set to one; it doesn’t
 		 * matter if in initial p this bit was set or not.
 		 */
-		static void markFrozen(long word) {
-			word |= SET_FREEZE_BIT_MASK;
+		static long markFrozen(long word) {
+			return word | SET_FREEZE_BIT_MASK;
 		}
 
 		/**
 		 * Returns the value of a pointer p with the frozen bit reset to zero; it
 		 * doesn’t matter if in initial p this bit was set or not.
 		 */
-		static void clearFrozen(long word) {
-			word &= UNSET_FREEZE_BIT_MASK;
+		static long clearFrozen(long word) {
+			return word & UNSET_FREEZE_BIT_MASK;
 		}
 
 		static bool isDeleted(long word) {
@@ -111,6 +111,7 @@ public:
 	};
 
 	std::atomic<int> counter;
+	Entry *head;
 	std::vector<Entry *> entriesArray;
 	std::atomic<Chunk *> newChunk;
 
@@ -155,6 +156,8 @@ public:
 		/* for (int i = 0; i < MAX; i++)
 			entriesArray.push_back(new Entry()); */
 
+		head = new Entry();
+		entriesArray.push_back(head);
 		compareAndSetFreezeState(0, NO_FREEZE);
 	}
 
@@ -302,11 +305,11 @@ public:
 			// Find method sets cur to a entry which should be the next to "entry"
 			// and prev holds the entry which will point to "entry"
 			if (Entry::isFrozen(savedNext))
-				Entry::markFrozen(cur);
+				cur = Entry::markFrozen(cur);
 			// cur will replace savedNext
 
 			if (Entry::isFrozen(cur))
-				Entry::markFrozen(entry);
+				entry = Entry::markFrozen(entry);
 			// entry will replace cur
 
 			// Attempt linking into the list
@@ -404,7 +407,27 @@ public:
 		 return;
 	}
 
-	RecovType FreezeDecision(Chunk* chunk);
+	/**
+	 * Checks the count of entries to decide operation to perform after freezing.
+	 * Multiple threads can delete or add entries o this method is important.
+	 */
+	RecovType FreezeDecision(Chunk* chunk) {
+		Entry* e = chunk->head->next;
+		int cnt = 0;
+		
+		// Going over the chunk’s list
+		while ( Entry::clearFrozen(e) != NULL ) {
+			cnt++;
+			e = e->next;
+		}
+
+		if ( cnt == MIN)
+			return MERGE; 
+		if ( cnt == MAX)
+			return SPLIT;
+			
+		return COPY;
+	}
 
 	Chunk* FreezeRecovery(Chunk* oldChunk, int key, int input, RecovType recov,
 			Chunk* mergeChunk, TriggerType trigger, bool* result);
