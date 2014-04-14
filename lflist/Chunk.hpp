@@ -13,16 +13,17 @@
 #include <map>
 #include <atomic>
 #include <vector>
+#include <limits.h>
 
 #define HALF_LONG sizeof(long) / 2
 
 #define KEY_MASK 0xffffffff00000000
 #define DATA_MASK 0x00000000ffffffff
 
-#define SET_FREEZE_BIT_MASK 2
-#define SET_DELETE_BIT_MASK 1
-#define UNSET_FREEZE_BIT_MASK 0xfffffffffffffffd
-#define UNSET_DELETE_BIT_MASK 0xfffffffffffffffe
+#define SET_FREEZE_BIT_MASK 1
+#define SET_DELETE_BIT_MASK 2
+#define UNSET_FREEZE_BIT_MASK 0xfffffffffffffffe
+#define UNSET_DELETE_BIT_MASK 0xfffffffffffffffd
 
 #define SET_FREEZE_STATE_MASK 7
 #define UNSET_FREEZE_STATE_MASK 0xfffffffffffffff8
@@ -80,24 +81,32 @@ public:
 		 * Checks if the frozen bit (second LSB) is set in a given pointer p and
 		 * returns true or false accordingly.
 		 */
-		bool isFrozen() {
-			return ((long)next & SET_FREEZE_BIT_MASK);
+		static bool isFrozen(long word) {
+			return (word & SET_FREEZE_BIT_MASK);
 		}
 
 		/**
 		 * Returns the value of a pointer p with the frozen bit set to one; it doesn’t
 		 * matter if in initial p this bit was set or not.
 		 */
-		void markFrozen() {
-			next |= SET_FREEZE_BIT_MASK;
+		static void markFrozen(long word) {
+			word |= SET_FREEZE_BIT_MASK;
 		}
 
 		/**
 		 * Returns the value of a pointer p with the frozen bit reset to zero; it
 		 * doesn’t matter if in initial p this bit was set or not.
 		 */
-		void clearFrozen() {
-			next &= UNSET_FREEZE_BIT_MASK;
+		static void clearFrozen(long word) {
+			word &= UNSET_FREEZE_BIT_MASK;
+		}
+
+		static bool isDeleted(long word) {
+			return (word & SET_DELETE_BIT_MASK);
+		}
+
+		int key() {
+			return (int) ((keyData & KEY_MASK) >> HALF_LONG);
 		}
 	};
 
@@ -143,8 +152,8 @@ public:
 
 	Chunk(int max, int min) : counter(0), newChunk(NULL), mergeBuddy(NULL), nextChunk(NULL), 
 			MAX(max), MIN(min) {
-		for (int i = 0; i < MAX; i++)
-			entriesArray.push_back(new Entry());
+		/* for (int i = 0; i < MAX; i++)
+			entriesArray.push_back(new Entry()); */
 
 		compareAndSetFreezeState(0, NO_FREEZE);
 	}
@@ -292,12 +301,12 @@ public:
 
 			// Find method sets cur to a entry which should be the next to "entry"
 			// and prev holds the entry which will point to "entry"
-			if (savedNext->isFrozen())
-				cur->markFrozen();
+			if (Entry::isFrozen(savedNext))
+				Entry::markFrozen(cur);
 			// cur will replace savedNext
 
-			if (cur->isFrozen())
-				entry->markFrozen();
+			if (Entry::isFrozen(cur))
+				Entry::markFrozen(entry);
 			// entry will replace cur
 
 			// Attempt linking into the list
@@ -343,8 +352,58 @@ public:
 		return FreezeRecovery(chunk, key, data, decision, chunkMergePartner, trigger, result);
     }
 
-	void MarkChunkFrozen(Chunk* chunk);
-	void StabilizeChunk(Chunk* chunk);
+	void MarkChunkFrozen(Chunk* chunk) {
+		for(unsigned i = 0; i < entriesArray.size(); i++) {
+			Entry *e = entriesArray[i];
+			long savedWord = (long) e->next;
+			
+			while ( !Entry::isFrozen((long) savedWord) ) {
+				// Loop till the next pointer is frozen
+				
+				e->next.compare_exchange_strong(savedWord, Entry::markFrozen((long) savedWord));
+				
+				savedWord = e->next;
+				// Reread from shared memory
+				
+			}
+			
+			savedWord = e->keyData;
+			
+			while ( !Entry::isFrozen((long) savedWord) ) {
+				// Loop till the keyData word is frozen
+				
+				e->keyDatacompare_exchange_strong(savedWord, Entry::markFrozen((long) savedWord));
+				
+				savedWord = e->keyData;
+				// Reread from shared memory
+				
+			}
+		} // end of foreach
+		
+		return;
+	}
+
+	void StabilizeChunk(Chunk* chunk) {
+		int maxKey = INT_MAX;
+		Find(chunk, maxKey);
+		// Implicitly remove deleted entries
+		for(unsigned i = 0; i < entriesArray.size(); i++) {
+			Entry *e = entriesArray[i];
+			int key = e->key();
+			Entry *eNext = e->next;
+		 
+			if ((key != Entry::DEFAULT_KEY) && (!isDeleted(eNext)) ) {
+		 	// This entry is allocated and not deleted
+		 
+		 		if ( !Find(chunk, key) )
+					InsertEntry(chunk, e, key);
+			}
+		 	// This key is not yet in the list
+		 } // end of foreach
+
+		 return;
+	}
+
 	RecovType FreezeDecision(Chunk* chunk);
 
 	Chunk* FreezeRecovery(Chunk* oldChunk, int key, int input, RecovType recov,
@@ -355,11 +414,13 @@ public:
 
 	Chunk* FindMergeSlave(Chunk* master);
 
-	bool SearchInChunk(Chunk* chunk, int key, int *data);bool Find(Chunk* chunk,
-			int key);bool DeleteInChunk(Chunk* chunk, int key);
+	bool SearchInChunk(Chunk* chunk, int key, int *data);
+	bool Find(Chunk* chunk,int key);
+	bool DeleteInChunk(Chunk* chunk, int key);
 
 	void RetireEntry(Entry* entry);
-	void HandleReclamationBuffer();bool ClearEntry(Chunk* chunk, Entry* entry);
+	void HandleReclamationBuffer();
+	bool ClearEntry(Chunk* chunk, Entry* entry);
 
 	void ListUpdate(RecovType recov, int key, Chunk* chunk);
 
