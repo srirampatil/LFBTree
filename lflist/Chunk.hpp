@@ -53,7 +53,7 @@ public:
 
 	class Entry {
     private:
-        std::atomic<char *> keyData;	// key, data and freezeBit
+        std::atomic<char> keyData[16];	// key, data and freezeBit
 		
 		std::atomic<Entry *> next;		// LSBs are deleteBit and freezeBit
 		// bool freezeBit:1;
@@ -324,6 +324,99 @@ public:
 			prevEntr = entr;
 			entr = Entry::clearFrozen(entr->next);
 		}
+	}
+
+	/*
+	 * Goes over all reachable entries on the old chunk linked list, finds the
+	 * median key (which is returned) and copies the bellow-median-value keys
+	 * to the new1 chunk and the above-median-value keys to the new2 chunk.
+	 * In addition it sets the new1 chunk’s pointer nextChunk to point at
+	 * the new2 chunk. It is assumed that no other thread is modifying the
+	 * new1 and new2 chunks, and that the old chunk is frozen and cannot be
+	 * modified.
+	 */
+	static long splitIntoTwoChunks(Chunk *old, Chunk *new1, Chunk *new2) {
+		Entry *slowPtr = Entry::clearFrozen(old->head->next);
+		Entry *fastPtr = slowPtr;
+		Entry *fastPtrNext = Entry::clearFrozen(fastPtr->next);
+	
+		while(fastPtr != NULL && fastPtrNext != NULL) {
+			fastPtr = Entry::clearFrozen(fastPtrNext->next);
+			fastPtrNext = Entry::clearFrozen(fastPtr->next);
+			slowPtr = Entry::clearFrozen(slowPtr->next);
+		}
+
+		Entry *median = slowPtr;
+		
+		Entry *entr = Entry::clearFrozen(old->head->next);
+		Entry *prevEntr = new1->head;
+		while(entr != median) {
+			new1->entriesArray.push_back(entr);
+			prevEntr->next = entr;
+			prevEntr = entr;
+			entr = Entry::clearFrozen(entr->next);
+		}
+
+		entr = Entry::clearFrozen(median->next);
+		while(entr != NULL) {
+			new1->entriesArray.push_back(entr);
+			prevEntr->next = entr;
+			prevEntr = entr;
+			entr = Entry::clearFrozen(entr->next);
+		}
+
+		return median->key();
+	}
+
+	/*
+	 * Goes over all reachable entries in the old1 and old2 chunks linked lists
+	 * (which are sequential), finds the median key (which is returned) and
+	 * copies the bellow-median-value keys to the new1 chunk linked list and
+	 * the above-median-value keys to the new2 chunk linked list. In addition
+	 * it sets the new1 chunk’s pointer nextChunk to point to the new2 chunk.
+	 * It is assumed that no other thread modifies the new1 and new2 chunks,
+	 * and that the old chunks are frozen and thus cannot be modified as well.
+	 */
+	static long mergeToTwoChunks(Chunk *old1, Chunk *old2, Chunk *new1, Chunk *new2) {
+		Entry *newListHead = Entry::clearFrozen(old1->head->next);
+		Entry *entr = newListHead, listNode = newListHead;
+
+		while(entr != NULL) {
+			entr = Entry::clearFrozen(entr->next);
+			listNode->next = entr;
+		}
+
+		entr = Entry::clearFrozen(old2->head->next);
+		listNode->next = entr;
+		while(entr != NULL) {
+			entr = Entry::clearFrozen(entr->next);
+			listNode->next = entr;
+		}
+
+		Entry *slowPtr = newListHead;
+		Entry *fastPtr = slowPtr;
+		Entry *fastPtrNext = fastPtr->next;
+	
+		while(fastPtr != NULL && fastPtrNext != NULL) {
+			fastPtr = fastPtrNext->next;
+			fastPtrNext = fastPtr->next;
+			slowPtr = slowPtr->next;
+		}
+
+		Entry *median = slowPtr;
+		listNode = newListHead;
+		while(listNode != median) {
+			new1->entriesArray.push_back(listNode);
+			listNode = listNode->next;
+		}
+
+		listNode = median->next;
+		while(listNode != NULL) {
+			new2->entriesArray.push_back(listNode);
+			listNode = listNode->next;
+		}
+
+		return median->key();
 	}
 
 	bool Search(long key, TData *data) {
