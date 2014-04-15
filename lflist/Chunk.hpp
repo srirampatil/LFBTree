@@ -28,6 +28,8 @@
 
 #define SET_FREEZE_STATE_MASK 7
 #define UNSET_FREEZE_STATE_MASK 0xfffffffffffffff8
+#define SET_SWAPPED_BIT_MASK 1
+#define UNSET_SWAPPED_BIT_MASK 0xfffffffffffffffe
 
 enum RecovType {
 	SPLIT, MERGE, COPY
@@ -67,7 +69,7 @@ public:
 			keyData[7] = DEFAULT_KEY;
 
 			// Preserve upper 4 bytes and mask lower 4 bytes
-			keyData &= KEY_MASK;
+			// keyData &= KEY_MASK;
 		}
 
 		virtual ~Entry() {
@@ -94,7 +96,7 @@ public:
 		 * Checks if the frozen bit (second LSB) is set in a given pointer p and
 		 * returns true or false accordingly.
 		 */
-		static bool isFrozen(long word) {
+		static bool isFrozen(Entry *word) {
 			return (word & SET_FREEZE_BIT_MASK);
 		}
 
@@ -102,7 +104,7 @@ public:
 		 * Returns the value of a pointer p with the frozen bit set to one; it doesn’t
 		 * matter if in initial p this bit was set or not.
 		 */
-		static long markFrozen(long word) {
+		static Entry *markFrozen(Entry *word) {
 			return word | SET_FREEZE_BIT_MASK;
 		}
 
@@ -110,12 +112,31 @@ public:
 		 * Returns the value of a pointer p with the frozen bit reset to zero; it
 		 * doesn’t matter if in initial p this bit was set or not.
 		 */
-		static long clearFrozen(long word) {
+		static Entry *clearFrozen(Entry *word) {
 			return word & UNSET_FREEZE_BIT_MASK;
 		}
 
-		static bool isDeleted(long word) {
+		/*
+		 * Checks if deleted bit (LSB) is set in given pointer p.
+		 */
+		static bool isDeleted(Entry *word) {
 			return (word & SET_DELETE_BIT_MASK);
+		}
+
+		/*
+		 * Returns the value of a pointer p with the deleted bit set to one; it doesn’t 
+		 * matter if in initial p this bit was set or not.
+		 */
+		static Entry *markDeleted(Entry *entr) {
+			return (entr | SET_DELETE_BIT_MASK);
+		}
+
+		/*
+		 * Returns the value of a pointer p with the deleted bit reset to zero; it
+		 * does not matter if in initial p this bit was set or not.
+		 */
+		static Entry *clearDeleted(Entry *entr) {
+			return (entry & UNSET_DELETE_BIT_MASK);
 		}
 
 		long key() {
@@ -150,7 +171,7 @@ public:
 	static __thread Entry **hp0;
 	static __thread Entry **hp1;
 
-	Entry* AllocateEntry(Chunk* chunk, int key, TData data) {
+	Entry* AllocateEntry(Chunk* chunk, long key, TData data) {
 		char *newKeyData = Entry::combineKeyData(key, data);
 		// Combine into the structure of a keyData word
 		char *expecEnt = Entry::combineKeyData(Entry::DEFAULT_KEY, 0);
@@ -184,8 +205,35 @@ public:
 	virtual ~Chunk() {
 	}
 
+	/*
+	 * Checks if swapped bit (LSB) is set in given pointer to a chunk c.
+	 */
+	static bool isSwapped(Chunk *chunk) {
+		return (chunk & SET_SWAPPED_BIT_MASK);
+	}
+
+	/*
+	 * Returns the value of a pointer c with the swapped bit set to one; it
+	 * does not matter if in initial c this bit was set or not.
+	 */
+	static Chunk *markSwapped(Chunk *chunk) {
+		return (chunk | SET_SWAPPED_BIT_MASK);
+	}
+
+	/*
+	 * Returns the value of a pointer c with the swapped bit set to zero; it
+	 * does not matter if in initial c this bit was set or not.
+	 */
+	static Chunk *clearSwapped(Chunk *chunk) {
+		return (chunk & UNSET_SWAPPED_BIT_MASK);
+	}
+
 	static Chunk *combineChunkState(Chunk *chunk, FreezeState state) {
 		return chunk | state;
+	}
+
+	static Chunk *Allocate() {
+		return new Chunk();
 	}
 
 	bool compareAndSetFreezeState(FreezeState oldState, FreezeState newState) {
@@ -214,21 +262,38 @@ public:
 		return mergeBuddy.compare_exchange_strong(oldMergeBuddy, newMergeBuddy);
 	}
 
-	bool Search(int key, TData *data) {
+	/*
+	 * Goes over all reachable entries in Chunk c, counts them, and returns the
+	 * number of entries. Chunk c is assumed to be frozen and thus cannot be
+	 * modified.
+	 */
+	int getEntrNum(Chunk *chunk) {
+		Entry *entr = chunk->head->next;
+		int count = 0;
+
+		while(Entry::clearFrozen(entr) != NULL) {
+			count++;
+			entr = entr->next;
+		}
+
+		return count;
+	}
+
+	bool Search(long key, TData *data) {
 		Chunk* chunk = FindChunk(key);
 		bool result = SearchInChunk(chunk, key, data);
 		// hp5 = hp4 = hp3 = hp2 = null;
 		return result;
 	}
 
-	bool Insert(int key, TData data) {
+	bool Insert(long key, TData data) {
 		Chunk* chunk = FindChunk(key);
 		bool result = InsertToChunk(chunk, key, data);
 		// hp5 = hp4 = hp3 = hp2 = null;
 		return result;
 	}
 
-	bool Delete(int key, TData data) {
+	bool Delete(long key, TData data) {
 		Chunk* chunk = FindChunk(key);
 		bool result = DeleteInChunk(chunk, key);
 		// hp5 = hp4 = hp3 = hp2 = null;
@@ -259,7 +324,7 @@ public:
 		}
 	}
 
-	bool InsertToChunk(Chunk* chunk, int key, TData data) {
+	bool InsertToChunk(Chunk* chunk, long key, TData data) {
 		// Find an available entry
 		Entry *current = AllocateEntry(chunk, key, data);
 
@@ -308,7 +373,7 @@ public:
 		// Clear all hazard pointers and return
 	}
 
-	ReturnCode InsertEntry(Chunk* chunk, Entry* entry, int key) {
+	ReturnCode InsertEntry(Chunk* chunk, Entry* entry, long key) {
 		while (true) {
 
 			// Find insert location and pointers to previous and current entries
@@ -347,7 +412,7 @@ public:
 		}
 	}
 
-	Chunk* Freeze(Chunk* chunk, int key, TData data, TriggerType trigger,
+	Chunk* Freeze(Chunk* chunk, long key, TData data, TriggerType trigger,
 				bool* result) {
 
 		chunk->compareAndSetFreezeState(NO_FREEZE, INTERNAL_FREEZE);
@@ -412,7 +477,7 @@ public:
 		// Implicitly remove deleted entries
 		for(unsigned i = 0; i < entriesArray.size(); i++) {
 			Entry *e = entriesArray[i];
-			int key = e->key();
+			long key = e->key();
 			Entry *eNext = e->next;
 		 
 			if ((key != Entry::DEFAULT_KEY) && (!isDeleted(eNext)) ) {
@@ -449,27 +514,82 @@ public:
 		return COPY;
 	}
 
-	Chunk* FreezeRecovery(Chunk* oldChunk, int key, int input, RecovType recov,
-			Chunk* mergeChunk, TriggerType trigger, bool* result);
+	Chunk* FreezeRecovery(Chunk* oldChunk, long key, int input, RecovType recovType,
+			Chunk* mergeChunk, TriggerType trigger, bool* result) {
+		Chunk *retChunk = NULL, newChunk2 = NULL, newChunk1 = Allocate();
+		// Allocate a new chunk
+		newChunk1->nextChunk = NULL;
 
-	Chunk* HelpInFreezeRecovery(Chunk* newChunk1, Chunk* newChunk2, int key,
+		switch ( recovType ) {
+			case COPY:
+		 		copyToOneChunk(oldChunk, newChunk1);
+				break;
+		 
+			case MERGE:
+		
+				if ( (getEntrNum(oldChunk)+getEntrNum(mergeChunk)) >= MAX ) {
+		
+		 			// The two neighboring old chunks will be merged into two new chunks
+		 
+		 			newChunk2 = Allocate();
+		 			// Allocate a second new chunk
+		 
+		 			newChunk1->nextChunk = newChunk2;
+					// Connect two chunks together
+					
+		 			newChunk2->nextChunk = null’;
+		 
+		 			separatKey = mergeToTwoChunks(oldChunk,mergeChunk,newChunk1,newChunk2);
+		
+				} else mergeToOneChunk(oldChunk,mergeChunk,newChunk1); // Merge to single chunk
+		 
+		 		break;
+		 	
+			case SPLIT:
+	
+				newChunk2 = Allocate();
+				// Allocate a second new chunk
+				
+				newChunk1->nextChunk = newChunk2;
+				// Connect two chunks together
+		
+				newChunk2->nextChunk = NULL;
+		
+				separatKey = splitIntoTwoChunks(oldChunk, newChunk1, newChunk2);
+				break;
+		} // end of switch
+		
+		// Perform the operation with which the freeze was initiated
+		HelpInFreezeRecovery(newChunk1, newChunk2, key, separatKey, input, trigger);
+		// Try to create a link to the first new chunk in the old chunk.
+		if ( !CAS(&(oldChunk->newChunk), NULL, newChunk1) ) {
+			RetireChunk(newChunk1); if (newChunk2) RetireChunk(newChunk2);
+			// Determine in which of the new chunks the key is located.
+			if ( key<separatKey ) retChunk=oldChunk->newChunk; else retChunk=FindChunk(key);
+		} else { retChunk = null; }
+		ListUpdate(recovType, key, oldChunk);
+		// User defined function
+		return retChunk;
+	}
+
+	Chunk* HelpInFreezeRecovery(Chunk* newChunk1, Chunk* newChunk2, long key,
 			int separatKey, int input, TriggerType trigger);
 
 	Chunk* FindMergeSlave(Chunk* master);
 
-	bool SearchInChunk(Chunk* chunk, int key, int *data);
-	bool Find(Chunk* chunk,int key);
-	bool DeleteInChunk(Chunk* chunk, int key);
+	bool SearchInChunk(Chunk* chunk, long key, TData *data);
+	bool Find(Chunk* chunk, long key);
+	bool DeleteInChunk(Chunk* chunk, long key);
 
 	void RetireEntry(Entry* entry);
 	void HandleReclamationBuffer();
 	bool ClearEntry(Chunk* chunk, Entry* entry);
 
-	void ListUpdate(RecovType recov, int key, Chunk* chunk);
+	void ListUpdate(RecovType recov, long key, Chunk* chunk);
 
 	bool HelpSwap(Chunk* expected);
 
-	Chunk* FindChunk(int key);
+	Chunk* FindChunk(long key);
 
 	Chunk* listFindPrevious(Chunk* chunk);
 };
