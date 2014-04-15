@@ -199,7 +199,7 @@ public:
 
 		head = new Entry();
 		entriesArray.push_back(head);
-		compareAndSetFreezeState(0, NO_FREEZE);
+		compareAndSetFreezeState(NO_FREEZE, NO_FREEZE);
 	}
 
 	virtual ~Chunk() {
@@ -237,10 +237,10 @@ public:
 	}
 
 	bool compareAndSetFreezeState(FreezeState oldState, FreezeState newState) {
-		Chunk *oldMergeBuddy = getMergeBuddy() & UNSET_FREEZE_STATE_MASK;
-		oldMergeBuddy  = (long) oldMergeBuddy | oldState;
+		Chunk *oldMergeBuddy = (Chunk *) (((long) getMergeBuddy()) & UNSET_FREEZE_STATE_MASK);
+		oldMergeBuddy  = (Chunk *) (((long) oldMergeBuddy) | oldState);
 
-		Chunk *newMergeBuddy = (long) oldMergeBuddy | newState;
+		Chunk *newMergeBuddy = (Chunk *) (((long) oldMergeBuddy) | newState);
 		
 		return compareAndSetMergeBuddyAndFreezeState(oldMergeBuddy, newMergeBuddy);
 	}
@@ -277,6 +277,53 @@ public:
 		}
 
 		return count;
+	}
+
+	/*
+	 * Goes over all reachable entries in the old chunk linked list and copies
+	 * them to the new chunk linked list. It is assumed no other thread is
+	 * modifying the new chunk, and that the old chunk is frozen, so it cannot
+	 * be modified as well.
+	 */
+	static void copyToOneChunk(Chunk *oldChunk, Chunk *chunk) {
+		Entry *entr = Entry::clearFrozen(oldChunk->head->next);
+		chunk->head->next = entr;
+
+		Entry *prevEntr = chunk->head;
+		while(entr != NULL) {
+			chunk->entriesArray.push_back(entr);
+			prevEntr->next = entr;
+			prevEntr = entr;
+			entr = Entry::clearFrozen(entr->next);
+		}
+	}
+
+	/*
+	 * Goes over all reachable entries on the old1 and old2 chunks linked lists
+	 * (which are sequential and have enough entries to fill one chunk’s linked
+	 * list) and copies them to the new chunk linked list. It is assumed that no
+	 * other thread modifies the new chunk and that the old chunks are frozen
+	 * and thus don’t change.
+	 */
+	static void mergeToOneChunk(Chunk *old1, Chunk *old2, Chunk *new1) {
+		Entry *entr = Entry::clearFrozen(old1->head->next);
+		new1->head->next = entr;
+
+		Entry *prevEntr = new1->head;
+		while(entr != NULL) {
+			new1->entriesArray.push_back(entr);
+			prevEntr->next = entr;
+			prevEntr = entr;
+			entr = Entry::clearFrozen(entr->next);
+		}
+
+		entr = Entry::clearFrozen(old2->head->next);
+		while(entr != NULL) {
+			new1->entriesArray.push_back(entr);
+			prevEntr->next = entr;
+			prevEntr = entr;
+			entr = Entry::clearFrozen(entr->next);
+		}
 	}
 
 	bool Search(long key, TData *data) {
@@ -514,9 +561,9 @@ public:
 		return COPY;
 	}
 
-	Chunk* FreezeRecovery(Chunk* oldChunk, long key, int input, RecovType recovType,
+	Chunk* FreezeRecovery(Chunk* oldChunk, long key, TData input, RecovType recovType,
 			Chunk* mergeChunk, TriggerType trigger, bool* result) {
-		Chunk *retChunk = NULL, newChunk2 = NULL, newChunk1 = Chunk::Allocate();
+		Chunk *retChunk = NULL, *newChunk2 = NULL, *newChunk1 = Chunk::Allocate();
 		// Allocate a new chunk
 		newChunk1->nextChunk = NULL;
 

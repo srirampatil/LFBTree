@@ -37,4 +37,6 @@ int main() {
 	cout << strlen(ac) << endl;
 
 	cout << sizeof(char) << endl;
+
+	Chunk<char *> *chunk = new Chunk<char *>(4, 10);
 }
