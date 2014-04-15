@@ -14,8 +14,9 @@
 #include <atomic>
 #include <vector>
 #include <limits.h>
+#include <cstdlib>
 
-#define HALF_LONG sizeof(long) / 2
+//#define HALF_LONG sizeof(long) / 2
 
 #define KEY_MASK 0xffffffff00000000
 #define DATA_MASK 0x00000000ffffffff
@@ -50,18 +51,20 @@ public:
 
 	class Entry {
     private:
-        std::atomic<long> keyData;
+        std::atomic<char *> keyData;	// key, data and freezeBit
 		
 		std::atomic<Entry *> next;		// LSBs are deleteBit and freezeBit
 		// bool freezeBit:1;
 		// bool deleteBit:1;
 
 	public:
-		static const int DEFAULT_KEY;
+		static const char DEFAULT_KEY;
 
 		Entry() : next(NULL) {
-			keyData = (long) DEFAULT_KEY;
-			keyData = keyData << HALF_LONG;
+			for(unsigned i = 0; i < sizeof(long double); i++)
+				keyData[i] = 0;
+			
+			keyData[7] = DEFAULT_KEY;
 
 			// Preserve upper 4 bytes and mask lower 4 bytes
 			keyData &= KEY_MASK;
@@ -70,10 +73,20 @@ public:
 		virtual ~Entry() {
 		}
 
-		static long combine(int key, TData data) {
-			long combinedKeyData = (long) key;
-			combinedKeyData <<= HALF_LONG;
-			combinedKeyData |= (long) data;
+		static char *combineKeyData(long key, TData data) {
+			char *combinedKeyData = new char[sizeof(long double)];
+			
+			long mask = 0x00000000000000ff;
+			for(unsigned i = 7, j = 15; i >= 0 && j >= 8; i--, j--) {
+				char byte = key & mask;
+				combinedKeyData[i] = byte;
+
+				byte = data & mask;
+				combinedKeyData[j] = byte;
+
+				mask = mask << sizeof(char);
+			}
+
 			return combinedKeyData;
 		}
 
@@ -105,8 +118,16 @@ public:
 			return (word & SET_DELETE_BIT_MASK);
 		}
 
-		int key() {
-			return (int) ((keyData & KEY_MASK) >> HALF_LONG);
+		long key() {
+			char keyStr[sizeof(long) + 1];
+			long retKey = 0;
+			for(unsigned i = 0; i < sizeof(long); i++)
+				keyStr[i]= keyData[i];
+			keyStr[sizeof(long)] = '\0';
+
+			retKey = atol(keyStr);
+			delete[] keyStr;
+			return retKey;
 		}
 	};
 
@@ -130,18 +151,17 @@ public:
 	static __thread Entry **hp1;
 
 	Entry* AllocateEntry(Chunk* chunk, int key, TData data) {
-		long keyData = Entry::combine(key, data);
+		char *newKeyData = Entry::combineKeyData(key, data);
 		// Combine into the structure of a keyData word
-		long expecEnt = Entry::combine(Entry::DEFAULT_KEY, 0);
+		char *expecEnt = Entry::combineKeyData(Entry::DEFAULT_KEY, 0);
 
 		// Traverse entries in chunk
 		for (unsigned i = 0; i < entriesArray.size(); i++) {
 			Entry *e = entriesArray[i];
 
-			if (e->keyData == expecEnt) {
+			if (strcmp(e->keyData, expecEnt) == 0) {
 				// Atomically try to allocate
-				if (atomic_compare_exchange_strong(&(e->keyData), &expecEnt,
-						keyData))
+				if (e->keyData.compare_exchange_strong(expecEnt, newKeyData))
 					return e;
 			}
 		}
@@ -164,12 +184,12 @@ public:
 	virtual ~Chunk() {
 	}
 
-	static Chunk *combine(Chunk *chunk, FreezeState state) {
+	static Chunk *combineChunkState(Chunk *chunk, FreezeState state) {
 		return chunk | state;
 	}
 
 	bool compareAndSetFreezeState(FreezeState oldState, FreezeState newState) {
-		Chunk *oldMergeBuddy = getMergeBuddy();
+		Chunk *oldMergeBuddy = getMergeBuddy() & UNSET_FREEZE_STATE_MASK;
 		oldMergeBuddy  = (long) oldMergeBuddy | oldState;
 
 		Chunk *newMergeBuddy = (long) oldMergeBuddy | newState;
@@ -182,7 +202,7 @@ public:
 	}
 
 	Chunk *getMergeBuddy() {
-		return mergeBuddy & UNSET_FREEZE_STATE_MASK;
+		return mergeBuddy;// & UNSET_FREEZE_STATE_MASK;
 	}
 
 	bool compareAndSetMergeBuddy(Chunk *oldMergeBuddy, Chunk *newMergeBuddy) {
@@ -337,10 +357,10 @@ public:
 
 		if ( chunk->getFreezeState() == EXTERNAL_FREEZE ) {
 			// This chunk was in external freeze before Line 1 executed. Find the master chunk.
-			Chunk *master = chunk->getMergeBuddyi();
+			Chunk *master = chunk->getMergeBuddy();
 			// Fix the buddy’s mergeBuddy pointer.
-			Chunk *masterOldBuddy = Chunk::combine(NULL, INTERNAL_FREEZE);
-			Chunk *masterNewBuddy = Chunk::combine(chunk, INTERNAL_FREEZE);
+			Chunk *masterOldBuddy = Chunk::combineChunkState(NULL, INTERNAL_FREEZE);
+			Chunk *masterNewBuddy = Chunk::combineChunkState(chunk, INTERNAL_FREEZE);
 			master->compareAndSetMergeBuddyAndFreezeState(masterOldBuddy, masterNewBuddy);
 			return FreezeRecovery(chunk->getMergeBuddy(), key, data, MERGE, chunk, trigger, result);
 		}
