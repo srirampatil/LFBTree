@@ -136,7 +136,7 @@ public:
 		 * does not matter if in initial p this bit was set or not.
 		 */
 		static Entry *clearDeleted(Entry *entr) {
-			return (entry & UNSET_DELETE_BIT_MASK);
+			return (entr & UNSET_DELETE_BIT_MASK);
 		}
 
 		long key() {
@@ -516,9 +516,11 @@ public:
 
 	Chunk* FreezeRecovery(Chunk* oldChunk, long key, int input, RecovType recovType,
 			Chunk* mergeChunk, TriggerType trigger, bool* result) {
-		Chunk *retChunk = NULL, newChunk2 = NULL, newChunk1 = Allocate();
+		Chunk *retChunk = NULL, newChunk2 = NULL, newChunk1 = Chunk::Allocate();
 		// Allocate a new chunk
 		newChunk1->nextChunk = NULL;
+
+		long separatKey = 0;
 
 		switch ( recovType ) {
 			case COPY:
@@ -531,23 +533,24 @@ public:
 		
 		 			// The two neighboring old chunks will be merged into two new chunks
 		 
-		 			newChunk2 = Allocate();
+		 			newChunk2 = Chunk::Allocate();
 		 			// Allocate a second new chunk
 		 
 		 			newChunk1->nextChunk = newChunk2;
 					// Connect two chunks together
 					
-		 			newChunk2->nextChunk = null’;
+		 			newChunk2->nextChunk = NULL;
 		 
 		 			separatKey = mergeToTwoChunks(oldChunk,mergeChunk,newChunk1,newChunk2);
 		
-				} else mergeToOneChunk(oldChunk,mergeChunk,newChunk1); // Merge to single chunk
+				} else
+					mergeToOneChunk(oldChunk,mergeChunk,newChunk1); // Merge to single chunk
 		 
 		 		break;
 		 	
 			case SPLIT:
 	
-				newChunk2 = Allocate();
+				newChunk2 = Chunk::Allocate();
 				// Allocate a second new chunk
 				
 				newChunk1->nextChunk = newChunk2;
@@ -556,6 +559,7 @@ public:
 				newChunk2->nextChunk = NULL;
 		
 				separatKey = splitIntoTwoChunks(oldChunk, newChunk1, newChunk2);
+				
 				break;
 		} // end of switch
 		
@@ -566,7 +570,7 @@ public:
 			RetireChunk(newChunk1); if (newChunk2) RetireChunk(newChunk2);
 			// Determine in which of the new chunks the key is located.
 			if ( key<separatKey ) retChunk=oldChunk->newChunk; else retChunk=FindChunk(key);
-		} else { retChunk = null; }
+		} else { retChunk = NULL; }
 		ListUpdate(recovType, key, oldChunk);
 		// User defined function
 		return retChunk;
