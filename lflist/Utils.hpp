@@ -8,7 +8,7 @@
 #ifndef UTILS_HPP_
 #define UTILS_HPP_
 
-typedef __uint128_t uint128;
+typedef unsigned __int128 uint128;
 
 class Utils {
 public:
@@ -19,7 +19,7 @@ public:
 
 	static uint128 combine(long msb, long lsb);
 
-	inline uint128 InterlockedCompareExchange128(volatile uint128 * src,
+	static inline uint128 InterlockedCompareExchange128(volatile uint128 * src,
 			uint128 cmp, uint128 with) {
 		__asm__ __volatile__
 		(

@@ -16,8 +16,7 @@
 #include <limits.h>
 
 #include "Utils.hpp"
-
-using namespace std;
+#include "Entry.hpp"
 
 #define SET_FREEZE_STATE_MASK 7
 #define UNSET_FREEZE_STATE_MASK 0xfffffffffffffff8
@@ -46,85 +45,10 @@ template<class TData>
 class Chunk {
 private:
 
-	class Entry {
-	public:
-		volatile uint128 keyData;					// key, data and free bit
-		std::atomic<Entry *> nextEntry;	// next entry, delete bit and freeze bit
-
-		Entry() :
-				nextEntry(NULL) {
-			setKey(Utils::DEFAULT_KEY);
-		}
-
-		virtual ~Entry() {
-		}
-
-		long getKey() {
-			uint128 mask = 0xffffffffffffffff0000000000000000;
-			uint128 k = keyData & mask;
-			k = k >> 64;
-			return (long) k;
-		}
-
-		long getData() {
-			uint128 mask = 0x0000000000000000fffffffffffffffe;
-			uint128 k = keyData & mask;
-			return (long) k;
-		}
-
-		long getDataWithFreezeBit() {
-			uint128 mask = 0x0000000000000000ffffffffffffffff;
-			uint128 k = keyData & mask;
-			return (long) k;
-		}
-
-		bool setKey(long newKey) {
-			uint128 oldKeyData = keyData;
-			uint128 newKeyData = Utils::combine(newKey, getDataWithFreezeBit());
-
-			return (oldKeyData
-					== Utils::InterlockedCompareExchange128(&keyData,
-							oldKeyData, newKeyData));
-		}
-
-		bool setData(long newData) {
-			uint128 oldKeyData = keyData;
-			uint128 newKeyData = Utils::combine(getKey(), newData);
-
-			return (oldKeyData
-					== Utils::InterlockedCompareExchange128(&keyData,
-							oldKeyData, newKeyData));
-		}
-
-		static bool isFrozen(Entry *e) {
-			return ((e & 1) == 1);
-		}
-
-		static Entry *markFrozen(Entry *e) {
-			return (Entry *) ((long) e | 1);
-		}
-
-		static Entry *clearFrozen(Entry *e) {
-			return (Entry *) ((long) e & 0xfffffffffffffffe);
-		}
-
-		static bool isDeleted(Entry *e) {
-			return ((e & 2) == 2);
-		}
-
-		static Entry *markDeleted(Entry *e) {
-			return (Entry *) ((long) e | 2);
-		}
-
-		static Entry *clearDeleted(Entry *e) {
-			return (Entry *) ((long) e & 0xfffffffffffffffd);
-		}
-	};
-
 	int MIN, MAX;
 	std::atomic<long> counter;		// number of entries currently allocated
 	Entry *head;
-	Entry entriesArray[];
+	Entry *entriesArray;
 	Chunk *newChunk;
 	std::atomic<long> mergeBuddy;			// merge ptr and freeze state
 	std::atomic<Chunk *> nextChunk;
@@ -146,21 +70,21 @@ public:
 			MIN(min), MAX(max), counter(0), newChunk(NULL), mergeBuddy(0), nextChunk(
 			NULL) {
 		if (MAX <= (2 * MIN + 1)) {
-			std::cerr << "MAX > (2 * MIN + 1): Condition violated!" << endl;
+			std::cerr << "MAX > (2 * MIN + 1): Condition violated!"
+					<< std::endl;
 			exit(1);
 		}
 
 		entriesArray = new Entry[MAX + 1];		// +1 for dummy header
 		for (int i = 0; i <= MAX; i++)
-			entriesArray[i] = *(new Entry());
+			entriesArray[i] = new Entry();
 
-		head = &entriesArray[0];
+		head = entriesArray[0];
 		mergeBuddy = (mergeBuddy | NO_FREEZE);
 	}
 
 	virtual ~Chunk() {
-		for (int i = 0; i < MAX; i++)
-			delete &entriesArray[i];
+		delete[] entriesArray;
 	}
 
 	/*
@@ -290,11 +214,11 @@ public:
 
 		// look for some empty entry
 		for (int i = 0; i < MAX; i++) {
-			if (entriesArray[i]->keyData == expectedKeyData) {
-				uint128 oldKeyData = entriesArray[i]->keyData;
+			if (entriesArray[i].keyData == expectedKeyData) {
+				uint128 oldKeyData = entriesArray[i].keyData;
 				if (oldKeyData
 						== Utils::InterlockedCompareExchange128(
-								&(entriesArray[i]->keyData), oldKeyData,
+								&(entriesArray[i].keyData), oldKeyData,
 								newKeyData))
 					return entriesArray[i];
 			}
@@ -323,7 +247,7 @@ public:
 					trigger, result);
 		}
 
-		TriggerType decision = freezeDecision(chunk);
+		RecovType decision = freezeDecision(chunk);
 		Chunk *mergePartner = NULL;
 		if (decision == MERGE)
 			mergePartner = findMergeSlave(chunk);
@@ -342,17 +266,19 @@ public:
 			}
 
 			// If neighbourhood is frozen keep it frozen
-			if (Entry::isFrozen(savedNext))
-				Entry::markFrozen(cur);
+			if (Entry::isFrozen((uint128) savedNext))
+				Entry::markFrozen((uint128) cur);
 
-			if (Entry::isFrozen(cur))
-				Entry::markFrozen(entry);
+			if (Entry::isFrozen((uint128) cur))
+				Entry::markFrozen((uint128) entry);
 
-			if (!entry->nextEntry.compare_exchange_strong(savedNext, cur))
+			if (!std::atomic_compare_exchange_strong(&(entry->nextEntry),
+					(long *) &savedNext, (long) cur))
 				continue;
 
 			// TODO: Changed this
-			if (!(*prev)->nextEntry.compare_exchange_strong(cur, entry))
+			if (!std::atomic_compare_exchange_strong(&((*prev)->nextEntry),
+					(long *) &cur, (long) entry))
 				continue;
 
 			return SUCCESS_THIS;
@@ -361,7 +287,25 @@ public:
 
 	bool clearEntry(Chunk *chunk, Entry *entry);
 	void incCount(Chunk *chunk);bool find(Chunk *chunk, long key);
-	void markChunkFrozen(Chunk *chunk);
+
+	void markChunkFrozen(Chunk *chunk) {
+		for (int i = 0; i < chunk->counter.load(); i++) {
+			long savedNext = (uint128) entriesArray[i].nextEntry.load();
+			while (!Entry::isFrozen(savedNext)) {
+				entriesArray[i].nextEntry.compare_exchange_strong(savedNext,
+						(long) Entry::markFrozen(savedNext));
+				savedNext = entriesArray[i].nextEntry.load();
+			}
+
+			uint128 savedWord = entriesArray[i].keyData;
+			while (!Entry::isFrozen(savedWord)) {
+				Utils::InterlockedCompareExchange128(&(entriesArray[i].keyData),
+						savedWord, Entry::markFrozen(savedWord));
+				savedWord = entriesArray[i].keyData;
+			}
+		}
+	}
+
 	void stabilizeChunk(Chunk *chunk);
 	RecovType freezeDecision(Chunk *chunk);
 	Chunk *findMergeSlave(Chunk *chunk);
