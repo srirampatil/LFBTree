@@ -114,7 +114,7 @@ public:
 	}
 
 	static Chunk *allocate() {
-		return new Chunk();
+		return new Chunk(Utils::MIN_KEYS, Utils::MAX_KEYS);
 	}
 
 	bool compareAndSetFreezeState(FreezeState oldState, FreezeState newState) {
@@ -467,7 +467,31 @@ public:
 	}
 
 	bool clearEntry(Chunk *chunk, Entry *entry);
-	void incCount(Chunk *chunk);bool find(Chunk *chunk, long key);
+
+	void incCount(Chunk *chunk) {
+		long cnt;
+		while(true) {
+			cnt = chunk->counter.load();
+
+			if(atomic_compare_exchange_strong(&(chunk->counter), cnt, cnt + 1))
+				return;
+		}
+	}
+
+	bool decCount(Chunk *chunk) {
+		int cnt;
+		while(true) {
+			cnt = chunk->counter.load();
+
+			if(cnt == MIN)
+				return false;
+
+			if(atomic_compare_exchange_strong(&(chunk->counter), cnt, cnt - 1))
+				return true;
+		}
+	}
+
+	bool find(Chunk *chunk, long key);
 
 	void markChunkFrozen(Chunk *chunk) {
 		// Not sure if this should be till MAX or counter
@@ -519,7 +543,37 @@ public:
 		return COPY;
 	}
 
-	Chunk *findMergeSlave(Chunk *chunk);
+	Chunk *findMergeSlave(Chunk *master) {
+		bool result;
+		Chunk *slave, *expectedMergeBuddy, *newMergeBuddy;
+
+		while (true) {
+			slave = listFindPrevious(master);
+			expectedMergeBuddy = combineChunkState(NULL, NO_FREEZE);
+			newMergeBuddy = combineChunkState(master, EXTERNAL_FREEZE);
+
+			if (!atomic_compare_exchange_strong(&(slave->mergeBuddy),
+					expectedMergeBuddy, newMergeBuddy)) {
+				if (slave->mergeBuddy == newMergeBuddy)
+					break;
+
+				// runtime crash
+				freeze(slave, 0, master, ENSLAVE, &result);
+			} else
+				break;
+		}
+
+		markChunkFrozen(slave);
+		stabilizeChunk(slave);
+
+		expectedMergeBuddy = combineChunkState(NULL, INTERNAL_FREEZE);
+		newMergeBuddy = combineChunkState(slave, INTERNAL_FREEZE);
+
+		atomic_compare_exchange_strong(&(master->mergeBuddy),
+				expectedMergeBuddy, newMergeBuddy);
+
+		return slave;
+	}
 
 	Chunk *freezeRecovery(Chunk *oldChunk, long key, TData data,
 			RecovType recovType, Chunk *mergeChunk, TriggerType trigger,
@@ -580,10 +634,45 @@ public:
 		return retChunk;
 	}
 
-	Chunk *helpInFreezeRecovery(Chunk *newChunk1, Chunk *newChunk2, long key,
-			long separateKey, TData data, TriggerType trigger);
+	// A lot of changes in this method than actual
+	void helpInFreezeRecovery(Chunk *newChunk1, Chunk *newChunk2, long key,
+			long separateKey, TData data, TriggerType trigger) {
+
+		switch (trigger) {
+		case DELETE:
+			deleteInChunk(newChunk1, key);
+			if (newChunk2 != NULL)
+				deleteInChunk(newChunk2, key);
+			break;
+
+		case INSERT:
+			if (newChunk2 != NULL && key < separateKey)
+				insertToChunk(newChunk2, key, data);
+			else
+				insertToChunk(newChunk1, key, data);
+			break;
+
+		case ENSLAVE:
+			if (newChunk2 != NULL)
+				newChunk2->mergeBuddy = combineChunkState(data,
+						EXTERNAL_FREEZE);
+			else
+				newChunk1->mergeBuddy = combineChunkState(data,
+						EXTERNAL_FREEZE);
+			break;
+		}
+	}
+
+	bool deleteInChunk(Chunk *chunk, long key);
 	void retireChunk(Chunk *chunk);
 	void listUpdate(RecovType recovType, long key, Chunk * chunk);
+
+	Chunk *listFindPrevious(Chunk * chunk) {
+		if(findChunk(chunk->head->nextEntry.load()->getKey()) != chunk)
+			return chunk->mergeBuddy.load();
+
+		return prev;
+	}
 };
 
 //} /* namespace lflist */
