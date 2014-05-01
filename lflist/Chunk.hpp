@@ -38,16 +38,18 @@ enum ReturnCode {
 };
 
 enum FreezeState {
-	NO_FREEZE = 0, INTERNAL_FREEZE, EXTERNAL_FREEZE
+	NO_FREEZE = 0, INTERNAL_FREEZE, EXTERNAL_FREEZE, INFANT, NORMAL, FREEZE, REQUEST_SLAVE, JOIN, SLAVE_FREEZE
 };
 
 template<class TData>
 class Chunk {
+public:
+	Entry *head;
 private:
 
 	int MIN, MAX;
 	std::atomic<long> counter;		// number of entries currently allocated
-	Entry *head;
+
 	Entry *entriesArray;
 	Chunk *newChunk;
 	std::atomic<long> mergeBuddy;			// merge ptr and freeze state
