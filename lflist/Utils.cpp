@@ -8,6 +8,8 @@
 #include "Utils.hpp"
 
 const char Utils::DEFAULT_KEY = '|';
+const int Utils::MIN_KEYS = 1;
+const int Utils::MAX_KEYS = 4;
 
 Utils::Utils() {
 	// TODO Auto-generated constructor stub

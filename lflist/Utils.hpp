@@ -13,6 +13,8 @@ typedef unsigned __int128 uint128;
 class Utils {
 public:
 	static const char DEFAULT_KEY;
+	static const int MIN_KEYS;
+	static const int MAX_KEYS;
 
 	Utils();
 	virtual ~Utils();
